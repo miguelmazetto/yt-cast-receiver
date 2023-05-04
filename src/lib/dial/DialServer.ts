@@ -6,8 +6,10 @@ import Logger from '../utils/Logger.js';
 import { DialServerError } from '../utils/Errors.js';
 import { CONF_DEFAULTS, STATUSES } from '../Constants.js';
 import { ValueOf } from '../utils/Type.js';
+import { Express } from 'express-serve-static-core';
 
 export interface DialOptions {
+  expressApp?: Express;
   port?: number;
   corsAllowOrigins?: boolean;
   prefix?: string;
@@ -84,7 +86,7 @@ export default class DialServer {
   constructor(app: YouTubeApp, options: DialOptions) {
     this.#logger = options.logger;
 
-    const expressApp = express();
+    const expressApp = options.expressApp || express();
     this.#dialOptions = {
       expressApp,
       port: options.port || 3000,
@@ -98,7 +100,10 @@ export default class DialServer {
       bindToAddresses: options.bindToAddresses
     };
     this.#dialServer = new dial.Server(this.#dialOptions);
-    this.#expressServer = http.createServer(expressApp);
+
+    if (options.expressApp === undefined || options.expressApp === null)
+      this.#expressServer = http.createServer(expressApp);
+
     this.#status = STATUSES.STOPPED;
   }
 
@@ -109,17 +114,14 @@ export default class DialServer {
     }
     this.#status = STATUSES.STARTING;
     this.#logger.debug('[yt-cast-receiver] Starting DIAL server...');
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       try {
-        this.#expressServer.listen(this.#dialOptions.port, () => {
-          this.#dialServer.start();
-          this.#status = STATUSES.RUNNING;
-          this.#logger.info(`[yt-cast-receiver] DIAL server listening on port ${this.#dialOptions.port}`);
-          resolve();
-        }).on('error', (error) => {
-          this.#status = STATUSES.STOPPED;
-          reject(new DialServerError('Failed to start DIAL server', error));
-        });
+        if (this.#expressServer)
+          await this.#expressServer.listen(this.#dialOptions.port)
+        this.#dialServer.start();
+        this.#status = STATUSES.RUNNING;
+        this.#logger.info(`[yt-cast-receiver] DIAL server listening on port ${this.#dialOptions.port}`);
+        resolve();
       }
       catch (error) {
         this.#status = STATUSES.STOPPED;
@@ -138,7 +140,8 @@ export default class DialServer {
     return new Promise((resolve, reject) => {
       try {
         this.#dialServer.stop();
-        this.#expressServer.close();
+        if (this.#expressServer)
+          this.#expressServer.close();
         this.#status = STATUSES.STOPPED;
         resolve();
       }
